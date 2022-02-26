@@ -1,0 +1,363 @@
+library(ggplot2)
+library(tidyverse)
+library(rlist)
+library(patchwork)
+library(viridis)
+library(reshape2)
+library(sqldf)
+library(moments)
+library(gghighlight)
+library(reshape)
+
+
+#----PARAMETER/VARIABLES----
+
+#Group size
+N <- 100
+
+#Description of environmental distribution
+Env.Mean <- 0
+Env.SD <- 1
+
+#Description of personality distirbution
+Personality_Mean <- 0
+Personality_SD <- 1
+
+#Information sampling
+#Personal
+K <- -1
+
+#Social
+Ks <- -1
+
+#information weight
+w <- 0.5
+
+#data frame to store info from inner loop
+REPS <- 1000
+
+Ks.Sims <- 3
+Ksims <- 3
+
+Ks.inc <- 2
+K.inc <- 2
+
+PROPORTIONS <- data.frame()
+
+prop.as.Agg <- data.frame()
+prop.as.Pass <- data.frame()
+
+#For data frame merging
+p.tot1 <- list()
+p.tot2 <- list()
+stacked_prop <- list()
+
+resample <- function(x, Ks,...) x[sample.int(length(x), size=Ks,...)]
+
+for (t in 1:Ksims) {
+  
+  #Increment the value of K by 1 each time 
+  K <- K + K.inc
+  
+  for (k in 1:Ks.Sims){
+    
+    #increment the value of Ks by 1 each time
+    Ks <- Ks + Ks.inc
+    
+    for(i in 1:REPS){
+      
+      #----(1) PERSONALITY DISTRIBUTION FOR N INDIVIDUALS----
+      
+      #Mean is arbritrary. The standard deviation is what matters here
+      #SD describes how variable the population is in their personality.
+      #Stick with mean = 0 to describe the center of that distribution.
+      
+      #creates distribution of personality values for N individuals
+      Pop_Personality <- rnorm(N, Personality_Mean, Personality_SD)
+      
+      
+      
+      #----(2) Behavioural rules----
+      
+      'Because you previously had your personality mean as 3, there is very SMALL
+chance that your decision rules will matter. This is because your decision rules
+operate by comparing agains that mean. In your old code, it compared against 0,
+but your mean for the personality was 3... do you see the issue there?'
+      
+      #values below personality mean
+      Below_Zero <- Pop_Personality[which(Pop_Personality > Personality_Mean)]
+      
+      #values above and equal to personality mean
+      Above_Zero <- Pop_Personality[which(Pop_Personality <= Personality_Mean)]
+      
+      'It might be a good idea to keep count of the proportion of individuals that are
+aggressive and passive per replicate'
+      
+      #I am arbritrarily saying that above the mean = aggressive. Feel free to change.
+      Aggressive_Size <- length(Above_Zero)
+      Proportion_Aggressive <- Aggressive_Size / N
+      
+      #Below mean = passive
+      Passive_Size <- length(Below_Zero)
+      Proportion_Passive <- Passive_Size / N
+      
+      
+      
+      
+      #----(3+ 4)Extracting information based on decision rules----
+      
+      Private_Aggressive <- c()
+      Others_Aggressive <- c()
+      
+      Private_Passive <- c()
+      Others_Passive <- c()
+      #Personal aggressive
+      
+      'Remember you are not sampling information for all individuals when you are 
+applying your decision rules, just a subset. Only some individuals are 
+aggressive, so you should sample info for only those individuals. The number
+of individuals that are of a certain personality type are given by the sizes.'
+      
+      
+      for(j in 1:Aggressive_Size){
+        
+        'this for loop is read verbally as, for each element in lenght 1 through 
+  aggressive size, perform these actions below...
+  
+  ***Remember, each time you run your code, the number of aggressive individuals
+  will change! This is important to account for, that is why it is
+  j in 1:Aggressive_Size and NOT 1:N'
+        
+        #Sample the environment for individual i
+        PA <- rnorm(K, Env.Mean, Env.SD)
+        
+        #Extract the position in vector PA (of lenght K) which is closest to the mean
+        #of the environment
+        Best_Index <- which.min(abs(PA - Env.Mean))
+        
+        #now that you have the position, what is the value? Extract it.
+        BEST_OF_PA <- PA[Best_Index]
+        
+        #assign into vector outside the for loop
+        Private_Aggressive[j] <- BEST_OF_PA
+        
+      }
+      
+      
+      'Passive and aggressive individuals are in the same population. Now we have
+to combine the passive personal assessments into the aggressive ones to 
+complete a vector of length N...'
+      
+      #Passive personal
+      
+      for(j in 1:Passive_Size){
+        
+        #Sample info for each individual i
+        PA <- rnorm(K, Env.Mean, Env.SD)
+        
+        #combine with behaivoural rules
+        Cautious <- mean(min(PA) + max(PA))
+        
+        #Assign into vector outside of the for loop
+        Private_Passive[j] <- Cautious 
+      }
+      
+      'MERGE the vectors together to get the personal assessments of all individuals
+This represents the personal assessments of aggressive and passive individuals
+in a single vector.'
+      
+      #concatenate vectors into a single one to represent pop. private assessments
+      Pop_Priv_Assessments <- c(Private_Aggressive, Private_Passive)
+      
+      
+      #Social assessments
+      
+      
+      
+      'The differences in the model are where individuals sample private info.
+If we keep the social information cognition part the same, then we can 
+say later on that potential differences are in the cognition of sampling info
+privately (i.e., between passive and aggressive behaviours).'
+      
+      #social aggressive
+      
+      for(j in 1:Aggressive_Size) {
+        
+        y <- resample(Pop_Priv_Assessments[-j], Ks)
+        #Average of soial samples is social assessment
+        AvgOthers_Agg <- mean(y)
+        
+        Others_Aggressive[j] <- AvgOthers_Agg
+      }
+      
+      
+      #Social aggressive
+      
+      for(j in 1:Passive_Size) {
+        y <- resample(Pop_Priv_Assessments[-j], Ks)
+        #Average of soial samples is social assessment
+        AvgOthers_Pass <- mean(y)
+        
+        Others_Passive[j] <- AvgOthers_Pass
+        
+      }
+      
+      Pop_Social_Assessments <- c(Others_Aggressive, Others_Passive)
+      
+      #----(5)Combined Assessment----
+      #Aggressive Combined
+      Combined1 <- ((1-w) * Private_Aggressive) + (w * Others_Aggressive)
+      Combined2 <- ((1 - w) * Private_Passive) + (w * Others_Passive)
+      
+      
+      #---(6)Accuracy analysis-----
+      #accuracy of the aggressive individuals
+      Agg.Quality <- rep(Env.Mean, Aggressive_Size)
+      Private_Accuracy1 <- (Agg.Quality - Private_Aggressive)^2
+      Combined_Accuracy1 <- (Agg.Quality - Combined1)^2
+      
+      
+      #accuracy of the passive individuals
+      Pass.Quality <- rep(Env.Mean, Passive_Size)
+      Private_Accuracy2 <- (Pass.Quality - Private_Passive)^2
+      Combined_Accuracy2 <- (Pass.Quality - Combined2)^2
+      
+      #Group change in accuracy
+      DACC1 <- (Private_Accuracy1 - Combined_Accuracy1)
+      DACC2 <- (Private_Accuracy2 - Combined_Accuracy2)
+      
+      #Agg  
+      #increasing in accuracy
+      inc.prop1 <- ((length(DACC1[DACC1 > 0])) / N)   
+      
+      #decreasing in accuracy
+      dec.prop1 <- ((length(DACC1[DACC1 < 0])) / N) 
+      
+      #no change in accuracy 
+      none.prop1 <- 1 - (inc.prop1 + dec.prop1)
+      
+      #pass  
+      #increasing in accuracy
+      inc.prop2 <- ((length(DACC2[DACC2 > 0])) / N)   
+      
+      #decreasing in accuracy
+      dec.prop2 <- ((length(DACC2[DACC2 < 0])) / N) 
+      
+      #no change in accuracy 
+      none.prop2 <- 1 - (inc.prop2 + dec.prop2)
+      
+      #----Data frames----
+      
+      PROPORTIONS[i, "Agg.Inc"] <- inc.prop1
+      PROPORTIONS[i, "Agg.Dec"] <- dec.prop1
+      PROPORTIONS[i, "Agg.None"] <- none.prop1
+      
+      PROPORTIONS[i, "Pass.Inc"] <- inc.prop2
+      PROPORTIONS[i, "Pass.Dec"] <- dec.prop2
+      PROPORTIONS[i, "Pass.None"] <- none.prop2
+    }
+    #---Grand Means---#
+    #total proportions across simulation 
+    inc.across1 <- round(mean(PROPORTIONS$Agg.Inc), 5)
+    dec.across1 <- round(mean(PROPORTIONS$Agg.Dec), 5)
+    none.across1 <- round(mean(PROPORTIONS$Agg.None), 5)
+    inc.across2 <- round(mean(PROPORTIONS$Pass.Inc), 5)
+    dec.across2 <- round(mean(PROPORTIONS$Pass.Dec), 5)
+    none.across2 <- round(mean(PROPORTIONS$Pass.None), 5)
+    
+    #Store into outer loop data frame
+    #-----------------PROPORTIONS-------------------------#
+    prop.as.Agg[k, "K"] <- K
+    prop.as.Agg[k, "Ks"] <- Ks
+    prop.as.Agg[k, "Inc"] <- inc.across1
+    prop.as.Agg[k, "Dec"] <- dec.across1
+    prop.as.Agg[k, "None"] <- none.across1
+    
+    #Store into outer loop data frame
+    #-----------------PROPORTIONS-------------------------#
+    prop.as.Pass[k, "K"] <- K
+    prop.as.Pass[k, "Ks"] <- Ks
+    prop.as.Pass[k, "Inc"] <- inc.across2
+    prop.as.Pass[k, "Dec"] <- dec.across2
+    prop.as.Pass[k, "None"] <- none.across2
+    
+    
+    
+    
+    
+    
+  }   
+  
+  #merge each increment data frame into list
+  p.tot1[[t]] <- prop.as.Agg
+  p.tot2[[t]] <- prop.as.Pass
+  
+  #Reset the value of social sample each time K is incremented
+  Ks <- -1
+  
+}
+
+stacked_prop1 <- bind_rows(p.tot1)
+stacked_prop2 <- bind_rows(p.tot2)
+#melt data frame according to stacked barplot requirements
+stacked_prop.Agg <- melt(stacked_prop1, id.vars = c("K", "Ks"), measure.vars = c("Inc", "None", "Dec"))
+stacked_prop.Pass <- melt(stacked_prop2, id.vars = c("K", "Ks"), measure.vars = c("Inc", "None", "Dec"))
+
+
+
+K_ONE_DF <- stacked_prop.Agg[stacked_prop.Agg$K == 1, ]
+
+K_ONE_PLOT <- ggplot(K_ONE_DF, aes(x = K, y = value, fill = variable)) + 
+  geom_bar(stat = "identity", position = "stack") + coord_polar("y") + facet_wrap(~Ks) + theme_classic() + 
+  theme(axis.text = element_blank(), axis.ticks = element_blank(), panel.grid = element_blank(),
+        strip.background = element_blank(), strip.text = element_blank(), legend.position = "none") +
+  scale_fill_viridis_d(name= "", option = "D") + labs( x = "K  = 1", y = "")
+
+
+K_THREE_DF <- stacked_prop.Agg[stacked_prop.Agg$K == 3, ]
+
+K_THREE_PLOT <- ggplot(K_THREE_DF, aes(x = K, y = value, fill = variable)) + 
+  geom_bar(stat = "identity", position = "stack") + coord_polar("y") + facet_wrap(~Ks) + theme_classic() + 
+  theme(axis.text = element_blank(), axis.ticks = element_blank(), panel.grid = element_blank(), 
+        strip.background = element_blank(), strip.text = element_blank(), panel.border = element_blank(), axis.line.x = element_blank(), legend.key.size = unit(0.75, 'cm')) +
+  scale_fill_viridis_d(name= "", option = "D")  + labs( x = "K  = 3", y = "")
+
+K_FIVE_DF <- stacked_prop.Agg[stacked_prop.Agg$K == 5, ]
+
+K_FIVE_PLOT <- ggplot(K_FIVE_DF, aes(x = K, y = value, fill = variable)) + 
+  geom_bar(stat = "identity", position = "stack") + coord_polar("y") + facet_wrap(~Ks) + theme_classic() + 
+  theme(axis.text = element_blank(), axis.ticks = element_blank(), panel.grid = element_blank(), axis.line.x = element_blank(), legend.position = "none") +
+  scale_fill_viridis_d(name= "", option = "D") + labs( x = "K  = 5", y = "", title = "A) Aggressive")
+
+AGGRESSIVE_PLOTS <- (K_FIVE_PLOT / K_THREE_PLOT / K_ONE_PLOT)
+
+#do same for passive indviduals 
+
+K_ONE_DF2 <- stacked_prop.Pass[stacked_prop.Pass$K == 1, ]
+
+K_ONE_PLOT2 <- ggplot(K_ONE_DF2, aes(x = K, y = value, fill = variable)) + 
+  geom_bar(stat = "identity", position = "stack") + coord_polar("y") + facet_wrap(~Ks) + theme_classic() + 
+  theme(axis.text = element_blank(), axis.ticks = element_blank(), panel.grid = element_blank(),
+        strip.background = element_blank(), strip.text = element_blank(), legend.position = "none") +
+  scale_fill_viridis_d(name= "", option = "D") + labs( x = "K  = 1", y = "")
+
+
+K_THREE_DF2 <- stacked_prop.Pass[stacked_prop.Pass$K == 3, ]
+
+K_THREE_PLOT2 <- ggplot(K_THREE_DF2, aes(x = K, y = value, fill = variable)) + 
+  geom_bar(stat = "identity", position = "stack") + coord_polar("y") + facet_wrap(~Ks) + theme_classic() + 
+  theme(axis.text = element_blank(), axis.ticks = element_blank(), panel.grid = element_blank(), 
+        strip.background = element_blank(), strip.text = element_blank(), panel.border = element_blank(), axis.line.x = element_blank(), legend.key.size = unit(0.75, 'cm')) +
+  scale_fill_viridis_d(name= "", option = "D")  + labs( x = "K  = 3", y = "")
+
+K_FIVE_DF2 <- stacked_prop.Pass[stacked_prop.Pass$K == 5, ]
+
+K_FIVE_PLOT2 <- ggplot(K_FIVE_DF2, aes(x = K, y = value, fill = variable)) + 
+  geom_bar(stat = "identity", position = "stack") + coord_polar("y") + facet_wrap(~Ks) + theme_classic() + 
+  theme(axis.text = element_blank(), axis.ticks = element_blank(), panel.grid = element_blank(), axis.line.x = element_blank(), legend.position = "none") +
+  scale_fill_viridis_d(name= "", option = "D") + labs( x = "K  = 5", y = "", title = "B) Passive")
+
+PASSIVE_PLOTS <- (K_FIVE_PLOT2 / K_THREE_PLOT2 / K_ONE_PLOT2)
+
+
+(AGGRESSIVE_PLOTS | PASSIVE_PLOTS)
